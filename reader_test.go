@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -76,8 +77,8 @@ func TestParsingRegularFile(t *testing.T) {
 		t.Errorf("asn real count: expected %d got %d", 2, len(records.Asns))
 	}
 
-	if len(records.Ips) != 10 {
-		t.Errorf("ips real count: expected %d got %d. Content: %v", 10, len(records.Ips), records.Ips)
+	if len(records.Ips) != 11 {
+		t.Errorf("ips real count: expected %d got %d. Content: %v", 11, len(records.Ips), records.Ips)
 	}
 
 	asnRecord := findAsnWith(records, 173)
@@ -109,6 +110,9 @@ func TestParsingRegularFile(t *testing.T) {
 	if !(len(splitNets) == 2 && splitNets[0].String() == "193.18.0.0/16" && splitNets[1].String() == "193.19.0.0/19") {
 		t.Errorf("invalid parsing of split subnet, got: %v", splitNets)
 	}
+
+	splitRecord2 := findIpWith(records, "0.0.0.0")
+	fmt.Println(splitRecord2.Net())
 }
 
 var regularData = `2.3|apnic|20110113|23486|19850701|20110112|+1000
@@ -128,4 +132,5 @@ apnic|JP|ipv6|2001:200:4000::|34|20030423|allocated
 apnic|JP|ipv6|2001:200:8000::|33|20030423|allocated
 ripencc|PL|ipv4|193.9.25.0|256|20090225|assigned
 ripencc|DE|ipv4|193.18.0.0|73728|19920922|assigned
+ripencc|XX|ipv4|0.0.0.0|4294967295|19920923|assigned
 ripencc|HU|ipv4|193.9.26.0|512|20081222|assigned|A91872ED`

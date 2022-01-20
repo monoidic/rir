@@ -4,8 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math"
+	"math/big"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -14,42 +15,53 @@ func main() {
 	ipquery := flag.String("q", "", "ip address to which to resolve country")
 	hostscount := flag.Bool("n", false, "given country return possible hosts count (exclude network and broadcast addresses)")
 
-	CreateCacheDir()
+	flag.Parse()
 
-	var data []*Records
-	for records := range retrieveData() {
-		data = append(data, records)
+	query := Query{country: strings.ToUpper(*country), ipstring: *ipquery, hostscount: *hostscount}
+
+	if !(query.IsCountryQuery() || query.IsIpQuery()) {
+		flag.Usage()
+		return
 	}
 
-	flag.Parse()
-	query := Query{data, *country, *ipquery, *hostscount}
+	CreateCacheDir()
+
+	records := retrieveData()
 
 	if query.IsCountryQuery() {
-		results := query.matchOnCountry()
+		results := query.matchOnCountry(records)
 		if query.hostscount {
-			var count int
-			for _, r := range results {
+			count := big.NewInt(0)
+			netHosts := big.NewInt(0)
+			one := big.NewInt(1)
+			two := big.NewInt(2)
+
+			for r := range results {
 				ones, size := r.Mask.Size()
-				mask := size - ones
+				mask := uint(size - ones)
 				if mask > 0 {
-					count = count + int((math.Pow(2, float64(mask)) - 2))
+					netHosts.Lsh(one, mask)
+					if size == 32 { // network/broadcast only applicable to v4
+						netHosts.Sub(netHosts, two)
+					}
+
+					count.Add(count, netHosts)
 				}
 			}
-			fmt.Println(count)
+			fmt.Println(count.String())
 		} else {
-			for _, r := range results {
+			for r := range results {
 				fmt.Println(r)
 			}
 		}
 	} else {
-		for _, r := range query.matchOnIp() {
+		for r := range query.matchOnIp(records) {
 			fmt.Println(r)
 		}
 	}
 }
 
 type Query struct {
-	data       []*Records
 	country    string
 	ipstring   string
 	hostscount bool
@@ -59,44 +71,74 @@ func (q *Query) IsCountryQuery() bool {
 	return q.country != ""
 }
 
-func (q *Query) matchOnCountry() []*net.IPNet {
-	if q.country == "" {
-		flag.Usage()
-	}
-
-	var results []*net.IPNet
-	for _, region := range q.data {
-		for _, iprecord := range region.Ips {
-			if iprecord.Cc == q.country && iprecord.Type == IPv4 {
-				results = append(results, iprecord.Net()...)
-			}
-		}
-	}
-
-	return results
+func (q *Query) IsIpQuery() bool {
+	return q.ipstring != ""
 }
 
-func (q *Query) matchOnIp() []string {
+func (q *Query) matchOnCountry(records chan *Records) chan *net.IPNet {
+	var wg sync.WaitGroup
+	ch := make(chan *net.IPNet, 10)
+	wg.Add(len(AllProviders))
+
+	go func() {
+		for region := range records {
+			go func(records *Records) {
+				for _, iprecord := range region.Ips {
+					if iprecord.Cc == q.country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
+						nets := iprecord.Net()
+						for _, net := range nets {
+							ch <- net
+						}
+					}
+				}
+				wg.Done()
+			}(region)
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	return ch
+}
+
+func (q *Query) matchOnIp(records chan *Records) chan string {
 	if q.ipstring == "" {
 		flag.Usage()
 	}
 
-	var results []string
-	for _, region := range q.data {
-		for _, iprecord := range region.Ips {
-			for _, ipnet := range iprecord.Net() {
-				if ipnet.Contains(net.ParseIP(q.ipstring)) {
-					results = append(results, fmt.Sprintf("%s %s", iprecord.Cc, ipnet))
+	var wg sync.WaitGroup
+	ch := make(chan string, 10)
+	wg.Add(len(AllProviders))
+
+	go func() {
+		for region := range records {
+			go func(records *Records) {
+				for _, iprecord := range region.Ips {
+					for _, ipnet := range iprecord.Net() {
+						if ipnet.Contains(net.ParseIP(q.ipstring)) {
+							ch <- fmt.Sprintf("%s %s", iprecord.Cc, ipnet)
+						}
+					}
 				}
-			}
+				wg.Done()
+			}(region)
 		}
-	}
-	return results
+	}()
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	return ch
 }
 
 func retrieveData() chan *Records {
 	var wg sync.WaitGroup
-	ch := make(chan *Records)
+	ch := make(chan *Records, 10)
 	wg.Add(len(AllProviders))
 
 	for _, provider := range AllProviders {

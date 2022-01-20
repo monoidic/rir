@@ -94,19 +94,19 @@ func (ipr *IpRecord) v4Net() []*net.IPNet {
 }
 
 func (ipr *IpRecord) v6Net() []*net.IPNet {
-	return []*net.IPNet{
-		&net.IPNet{IP: ipr.Start, Mask: net.CIDRMask(ipr.Value, net.IPv6len*8)},
-	}
+	return []*net.IPNet{&net.IPNet{IP: ipr.Start, Mask: net.CIDRMask(ipr.Value, net.IPv6len*8)}}
 }
 
 func (ipr *IpRecord) Net() []*net.IPNet {
-	if ipr.Type == IPv4 {
+	switch ipr.Type {
+	case IPv4:
 		return ipr.v4Net()
-	} else if ipr.Type == IPv6 {
+	case IPv6:
 		return ipr.v6Net()
+	default:
+		log.Fatalf("no ipnet for ip of type '%s'", ipr.Type)
+		return nil
 	}
-	log.Fatalf("no ipnet for ip of type '%s'", ipr.Type)
-	return nil
 }
 
 type Reader struct {
@@ -143,13 +143,10 @@ func (r *Reader) Read() (*Records, error) {
 			case IPv6:
 				ipv6Count = summary.Count
 			}
-		} else {
-			if p.isIp() {
-				ipRecords = append(ipRecords, p.parseIp())
-
-			} else if p.isAsn() {
-				asnRecords = append(asnRecords, p.parseAsn())
-			}
+		} else if p.isIp() {
+			ipRecords = append(ipRecords, p.parseIp())
+		} else if p.isAsn() {
+			asnRecords = append(asnRecords, p.parseAsn())
 		}
 	}
 
