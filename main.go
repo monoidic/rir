@@ -11,6 +11,7 @@ import (
 )
 
 func main() {
+	all := flag.Bool("a", false, "print all subnets and countries in TSV")
 	country := flag.String("c", "", "2 letters string of the country (ISO 3166)")
 	ipquery := flag.String("q", "", "ip address to which to resolve country")
 	hostscount := flag.Bool("n", false, "given country return possible hosts count (exclude network and broadcast addresses)")
@@ -19,7 +20,7 @@ func main() {
 
 	query := Query{country: strings.ToUpper(*country), ipstring: *ipquery, hostscount: *hostscount}
 
-	if !(query.IsCountryQuery() || query.IsIpQuery()) {
+	if !(*all || query.IsCountryQuery() || query.IsIpQuery()) {
 		flag.Usage()
 		return
 	}
@@ -28,7 +29,9 @@ func main() {
 
 	records := retrieveData()
 
-	if query.IsCountryQuery() {
+	if *all {
+		printAll(records)
+	} else if query.IsCountryQuery() {
 		results := query.matchOnCountry(records)
 		if query.hostscount {
 			count := big.NewInt(0)
@@ -61,6 +64,37 @@ func main() {
 	}
 }
 
+func printAll(records chan *Records) {
+	var wg sync.WaitGroup
+	ch := make(chan string, 10)
+	wg.Add(len(AllProviders))
+	go func() {
+		for region := range records {
+			go func(records *Records) {
+				for _, iprecord := range records.Ips {
+					cc := iprecord.Cc
+					if cc == "" {
+						continue
+					}
+					for _, net := range iprecord.Net() {
+						ch <- fmt.Sprintf("%s\t%s", cc, net)
+					}
+				}
+				wg.Done()
+			}(region)
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	for s := range ch {
+		fmt.Println(s)
+	}
+}
+
 type Query struct {
 	country    string
 	ipstring   string
@@ -83,10 +117,9 @@ func (q *Query) matchOnCountry(records chan *Records) chan *net.IPNet {
 	go func() {
 		for region := range records {
 			go func(records *Records) {
-				for _, iprecord := range region.Ips {
+				for _, iprecord := range records.Ips {
 					if iprecord.Cc == q.country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
-						nets := iprecord.Net()
-						for _, net := range nets {
+						for _, net := range iprecord.Net() {
 							ch <- net
 						}
 					}
