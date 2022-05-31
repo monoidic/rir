@@ -18,11 +18,11 @@ type DefaultProvider struct {
 	url  string
 }
 
-func (p *DefaultProvider) Name() string {
+func (p DefaultProvider) Name() string {
 	return p.name
 }
 
-func (p *DefaultProvider) GetData() io.Reader {
+func (p DefaultProvider) GetData() io.Reader {
 	log.Printf("Fetching %s data", p.Name())
 	response, err := http.Get(p.url)
 	if err != nil {
@@ -43,7 +43,7 @@ func (p *DefaultProvider) GetData() io.Reader {
 }
 
 var (
-	AllProviders = []*CachedProvider{
+	AllProviders = []CachedProvider{
 		NewCachedProvider(
 			"afrinic",
 			"https://ftp.ripe.net/pub/stats/afrinic/delegated-afrinic-extended-latest",

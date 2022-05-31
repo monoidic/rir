@@ -29,24 +29,24 @@ func BenchmarkReader(b *testing.B) {
 	NewReader(data).Read()
 }
 
-func findIpWith(records *Records, address string) *IpRecord {
+func findIpWith(records Records, address string) IpRecord {
 	for _, ip := range records.Ips {
 		if address == ip.Start.String() {
 			return ip
 		}
 	}
 	log.Fatalf("Cannot find ip with address %s", address)
-	return &IpRecord{}
+	return IpRecord{}
 }
 
-func findAsnWith(records *Records, number int) *AsnRecord {
+func findAsnWith(records Records, number int) AsnRecord {
 	for _, asn := range records.Asns {
 		if number == asn.Start {
 			return asn
 		}
 	}
 	log.Fatalf("Cannot find asn with number %d", number)
-	return &AsnRecord{}
+	return AsnRecord{}
 
 }
 
