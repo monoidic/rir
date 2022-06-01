@@ -26,7 +26,7 @@ func BenchmarkReader(b *testing.B) {
 	}
 	b.ResetTimer()
 	data := bytes.NewBuffer(content)
-	NewReader(data).Read()
+	_, _ = NewReader(data).Read()
 }
 
 func findIpWith(records Records, address string) IpRecord {

@@ -86,22 +86,7 @@ func printAll(records chan Records) {
 	var wg sync.WaitGroup
 	ch := make(chan string, 10)
 	wg.Add(len(AllProviders))
-	go func() {
-		for region := range records {
-			go func(records Records) {
-				for _, iprecord := range records.Ips {
-					cc := iprecord.Cc
-					if cc == "" {
-						continue
-					}
-					for _, net := range iprecord.Net() {
-						ch <- fmt.Sprintf("%s\t%s", cc, net)
-					}
-				}
-				wg.Done()
-			}(region)
-		}
-	}()
+	go readRegionsAll(records, ch, &wg)
 
 	go func() {
 		wg.Wait()
@@ -111,6 +96,25 @@ func printAll(records chan Records) {
 	for s := range ch {
 		fmt.Println(s)
 	}
+}
+
+func readRegionsAll(recordsCh chan Records, ch chan string, wg *sync.WaitGroup) {
+	for region := range recordsCh {
+		go readRecordsAll(region, ch, wg)
+	}
+}
+
+func readRecordsAll(region Records, ch chan string, wg *sync.WaitGroup) {
+	for _, iprecord := range region.Ips {
+		cc := iprecord.Cc
+		if cc == "" {
+			continue
+		}
+		for _, net := range iprecord.Net() {
+			ch <- fmt.Sprintf("%s\t%s", cc, net)
+		}
+	}
+	wg.Done()
 }
 
 type Query struct {
