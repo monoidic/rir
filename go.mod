@@ -1,3 +1,3 @@
-module github.com/simcap/rir
+module github.com/monoidic/rir
 
 go 1.17
