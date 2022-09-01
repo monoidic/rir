@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 )
@@ -34,7 +33,7 @@ func (p DefaultProvider) GetData() io.Reader {
 		log.Fatalf("HTTP call returned %d", status)
 	}
 
-	content, err := ioutil.ReadAll(response.Body)
+	content, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Fatal(err)
 	}

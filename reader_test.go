@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 // BenchmarkReader	       1	1235675316 ns/op
 func BenchmarkReader(b *testing.B) {
 	path := filepath.Join(os.Getenv("HOME"), ".rir", "ripencc", "latest")
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		log.Fatalf("Cannot read file for bench. %v", err)
 	}

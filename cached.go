@@ -6,7 +6,6 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -42,7 +41,7 @@ func (p CachedProvider) GetData() io.Reader {
 		CopyDataToFile(data, f)
 	}
 
-	content, _ := ioutil.ReadFile(f.Name())
+	content, _ := os.ReadFile(f.Name())
 	return bytes.NewBuffer(content)
 }
 
@@ -92,7 +91,7 @@ func (p CachedProvider) filePath() string {
 }
 
 func (p CachedProvider) localMd5() string {
-	content, err := ioutil.ReadFile(p.filePath())
+	content, err := os.ReadFile(p.filePath())
 	if err != nil {
 		log.Fatalf("Cannot checksum local file for %s. %s", p.Name(), err)
 	}
@@ -113,7 +112,7 @@ func (p CachedProvider) remoteMd5() string {
 		return ""
 	}
 
-	md5Response, _ := ioutil.ReadAll(resp.Body)
+	md5Response, _ := io.ReadAll(resp.Body)
 
 	matches := MD5SigRegex.FindSubmatch(md5Response)
 
