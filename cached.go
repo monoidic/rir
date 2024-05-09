@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/md5"
 	"fmt"
@@ -20,35 +19,34 @@ type CachedProvider struct {
 
 func NewCachedProvider(name string, url string) CachedProvider {
 	return CachedProvider{
-		DefaultProvider{name, url},
+		DefaultProvider: DefaultProvider{
+			name: name,
+			url:  url,
+		},
 	}
 }
 
-const ONE_DAY = 86400.0
-
 func (p CachedProvider) GetData() io.Reader {
-	f := p.GetFile()
+	f := check1(os.OpenFile(p.filePath(), os.O_CREATE|os.O_RDWR, 0o700))
 	defer f.Close()
-	finfo, _ := f.Stat()
+	finfo := check1(f.Stat())
 
-	fileage := time.Since(finfo.ModTime()).Seconds()
-
-	if finfo.Size() > 0 && fileage < ONE_DAY {
+	if finfo.Size() > 0 && time.Since(finfo.ModTime()) < time.Hour*24 {
 		// no refresh needed
 	} else if finfo.Size() == 0 || p.isStale() {
 		log.Printf("Refreshing %s data", p.Name())
 		data := p.DefaultProvider.GetData()
-		CopyDataToFile(data, f)
+		check1(io.Copy(f, data))
 	}
 
-	content, _ := os.ReadFile(f.Name())
+	content := check1(os.ReadFile(f.Name()))
 	return bytes.NewBuffer(content)
 }
 
 func (p CachedProvider) isStale() bool {
 	local := p.localMd5()
 	remote := p.remoteMd5()
-	return (local != remote) || (remote == "" && local == "")
+	return local != remote
 }
 
 func GetCacheDir() string {
@@ -58,32 +56,8 @@ func GetCacheDir() string {
 func CreateCacheDir() {
 	for _, provider := range AllProviders {
 		path := filepath.Join(GetCacheDir(), provider.Name())
-		err := os.MkdirAll(path, 0700)
-		if err != nil {
-			panic(err)
-		}
+		check(os.MkdirAll(path, 0o700))
 	}
-}
-
-func CopyDataToFile(data io.Reader, dest *os.File) {
-	log.Printf("Start copying to %s", dest.Name())
-	writer := bufio.NewWriter(dest)
-	if _, err := io.Copy(writer, data); err != nil {
-		log.Fatal(err)
-	}
-	err := writer.Flush()
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Finished copying to %s", dest.Name())
-}
-
-func (p CachedProvider) GetFile() *os.File {
-	f, err := os.OpenFile(p.filePath(), os.O_CREATE|os.O_RDWR, 0700)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return f
 }
 
 func (p CachedProvider) filePath() string {
@@ -91,20 +65,14 @@ func (p CachedProvider) filePath() string {
 }
 
 func (p CachedProvider) localMd5() string {
-	content, err := os.ReadFile(p.filePath())
-	if err != nil {
-		log.Fatalf("Cannot checksum local file for %s. %s", p.Name(), err)
-	}
+	content := check1(os.ReadFile(p.filePath()))
 	return fmt.Sprintf("%x", md5.Sum(content))
 }
 
 var MD5SigRegex = regexp.MustCompile(`(?i)([a-f0-9]{32})`)
 
 func (p CachedProvider) remoteMd5() string {
-	resp, err := http.Get(p.url + ".md5")
-	if err != nil {
-		log.Fatal(err)
-	}
+	resp := check1(http.Get(p.url + ".md5"))
 	defer resp.Body.Close()
 
 	if status := resp.StatusCode; status != 200 {
@@ -112,7 +80,7 @@ func (p CachedProvider) remoteMd5() string {
 		return ""
 	}
 
-	md5Response, _ := io.ReadAll(resp.Body)
+	md5Response := check1(io.ReadAll(resp.Body))
 
 	matches := MD5SigRegex.FindSubmatch(md5Response)
 

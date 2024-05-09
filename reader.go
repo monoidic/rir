@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"io"
+	"iter"
 	"log"
 	"math"
 	"net/netip"
@@ -68,8 +69,7 @@ func hostMaxLen(ip uint32) int {
 	return res
 }
 
-func (ipr IpRecord) v4Net() []netip.Prefix {
-	var out []netip.Prefix
+func (ipr IpRecord) v4Net(yield func(netip.Prefix) bool) {
 	var currentIP [4]byte
 	currentIPS := currentIP[:]
 	hostsCount := uint32(ipr.Value)
@@ -78,38 +78,36 @@ func (ipr IpRecord) v4Net() []netip.Prefix {
 
 	for hostsCount > 0 {
 		binary.BigEndian.PutUint32(currentIPS, currentStart)
-		var minNet int
 
 		logRes := int(math.Log2(float64(hostsCount)))
 		maxRes := hostMaxLen(currentStart)
+		minNet := maxRes
 		if logRes < maxRes {
 			minNet = logRes
-		} else {
-			minNet = maxRes
 		}
 
 		ip := netip.AddrFrom4(currentIP)
 
-		out = append(out, netip.PrefixFrom(ip, 32-minNet))
+		if !yield(netip.PrefixFrom(ip, 32-minNet)) {
+			return
+		}
 
 		numHosts := uint32(1 << minNet)
 		hostsCount -= numHosts
 		currentStart += numHosts
 	}
-
-	return out
 }
 
-func (ipr IpRecord) v6Net() []netip.Prefix {
-	return []netip.Prefix{netip.PrefixFrom(ipr.Start, ipr.Value)}
+func (ipr IpRecord) v6Net(yield func(netip.Prefix) bool) {
+	yield(netip.PrefixFrom(ipr.Start, ipr.Value))
 }
 
-func (ipr IpRecord) Net() []netip.Prefix {
+func (ipr IpRecord) Net() iter.Seq[netip.Prefix] {
 	switch ipr.Type {
 	case IPv4:
-		return ipr.v4Net()
+		return ipr.v4Net
 	case IPv6:
-		return ipr.v6Net()
+		return ipr.v6Net
 	default:
 		log.Fatalf("no ipnet for ip of type '%s'", ipr.Type)
 		return nil
@@ -121,12 +119,14 @@ type Reader struct {
 }
 
 func NewReader(r io.Reader) Reader {
-	return Reader{bufio.NewScanner(r)}
+	return Reader{
+		s: bufio.NewScanner(r),
+	}
 }
 
-func (r Reader) Read() (Records, error) {
-	asnRecords := []AsnRecord{}
-	ipRecords := []IpRecord{}
+func (r Reader) Read() Records {
+	var asnRecords []AsnRecord
+	var ipRecords []IpRecord
 	var asnCount, ipv4Count, ipv6Count int
 	var version Version
 	var p parser
@@ -135,12 +135,12 @@ func (r Reader) Read() (Records, error) {
 		p.currentLine = r.s.Text()
 		p.fields = strings.Split(p.currentLine, "|")
 
-		if p.isIgnored() {
-			continue
-		}
-		if p.isVersion() {
+		switch {
+		case p.isIgnored():
+			// ignored
+		case p.isVersion():
 			version = p.parseVersion()
-		} else if p.isSummary() {
+		case p.isSummary():
 			summary := p.parseSummary()
 			switch summary.Type {
 			case ASN:
@@ -150,9 +150,9 @@ func (r Reader) Read() (Records, error) {
 			case IPv6:
 				ipv6Count = summary.Count
 			}
-		} else if p.isIp() {
+		case p.isIp():
 			ipRecords = append(ipRecords, p.parseIp())
-		} else if p.isAsn() {
+		case p.isAsn():
 			asnRecords = append(asnRecords, p.parseAsn())
 		}
 	}
@@ -165,13 +165,13 @@ func (r Reader) Read() (Records, error) {
 		Ipv6Count: ipv6Count,
 		Asns:      asnRecords,
 		Ips:       ipRecords,
-	}, nil
+	}
 
 }
 
 var (
 	versionRegex = regexp.MustCompile(`^\d+\.*\d*`)
-	ignoredRegex = regexp.MustCompile(`^#|^\s*$`)
+	ignoredRegex = regexp.MustCompile(`^\s*(#.*)?$`)
 )
 
 type parser struct {
@@ -200,28 +200,37 @@ func (p parser) isAsn() bool {
 }
 
 func (p parser) parseVersion() Version {
-	version, _ := strconv.ParseFloat(p.fields[0], 64)
 	return Version{
-		version, p.fields[1], p.fields[2], p.toInt(p.fields[3]),
-		p.fields[4], p.fields[5], p.fields[6],
+		Version:   check1(strconv.ParseFloat(p.fields[0], 64)),
+		Registry:  p.fields[1],
+		Serial:    p.fields[2],
+		Records:   check1(strconv.Atoi(p.fields[3])),
+		StartDate: p.fields[4],
+		EndDate:   p.fields[5],
+		UtcOffset: p.fields[6],
 	}
 }
 
 func (p parser) parseSummary() Summary {
-	return Summary{p.fields[0], p.fields[2], p.toInt(p.fields[4])}
+	return Summary{
+		Registry: p.fields[0],
+		Type:     p.fields[2],
+		Count:    check1(strconv.Atoi(p.fields[4])),
+	}
 }
 
 func (p parser) parseIp() IpRecord {
-	ip, err := netip.ParseAddr(p.fields[3])
-	if err != nil {
-		panic(err)
+	return IpRecord{
+		Record: p.buildRecord(),
+		Start:  netip.MustParseAddr(p.fields[3]),
 	}
-
-	return IpRecord{p.buildRecord(), ip}
 }
 
 func (p parser) parseAsn() AsnRecord {
-	return AsnRecord{p.buildRecord(), p.toInt(p.fields[3])}
+	return AsnRecord{
+		Record: p.buildRecord(),
+		Start:  check1(strconv.Atoi(p.fields[3])),
+	}
 }
 
 func (p parser) buildRecord() Record {
@@ -229,24 +238,14 @@ func (p parser) buildRecord() Record {
 		Registry: p.fields[0],
 		Cc:       p.fields[1],
 		Type:     p.fields[2],
-		Value:    p.toInt(p.fields[4]),
+		Value:    check1(strconv.Atoi(p.fields[4])),
 		Date:     p.fields[5],
 		Status:   p.fields[6],
 	}
-	if p.isExtendedRecord() {
+
+	if len(p.fields) > 7 { // extended record
 		record.OpaqueId = p.fields[7]
 	}
+
 	return record
-}
-
-func (p parser) isExtendedRecord() bool {
-	return len(p.fields) > 7
-}
-
-func (p parser) toInt(s string) int {
-	value, err := strconv.Atoi(s)
-	if err != nil {
-		log.Fatalf("cannot convert string '%s' to int: %v", s, err)
-	}
-	return value
 }

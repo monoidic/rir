@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,16 +17,13 @@ import (
 // BenchmarkReader	       1	1235675316 ns/op
 func BenchmarkReader(b *testing.B) {
 	path := filepath.Join(os.Getenv("HOME"), ".rir", "ripencc", "latest")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("Cannot read file for bench. %v", err)
-	}
+	content := check1(os.ReadFile(path))
 	if len(content) == 0 {
 		log.Fatal(" File for bench is empty!")
 	}
 	b.ResetTimer()
 	data := bytes.NewBuffer(content)
-	_, _ = NewReader(data).Read()
+	_ = NewReader(data).Read()
 }
 
 func findIpWith(records Records, address string) IpRecord {
@@ -40,7 +38,7 @@ func findIpWith(records Records, address string) IpRecord {
 
 func findAsnWith(records Records, number int) AsnRecord {
 	for _, asn := range records.Asns {
-		if number == asn.Start {
+		if asn.Start <= number && number < asn.Start+asn.Value {
 			return asn
 		}
 	}
@@ -52,7 +50,7 @@ func findAsnWith(records Records, number int) AsnRecord {
 func TestParsingRegularFile(t *testing.T) {
 	data := bytes.NewBufferString(regularData)
 
-	records, _ := NewReader(data).Read()
+	records := NewReader(data).Read()
 
 	recordsCount, asnCount, ipv4Count, ipv6Count := 23486, 3986, 17947, 1553
 
@@ -105,7 +103,10 @@ func TestParsingRegularFile(t *testing.T) {
 	}
 
 	splitRecord := findIpWith(records, "193.18.0.0")
-	splitNets := splitRecord.Net()
+	var splitNets []netip.Prefix
+	for net := range splitRecord.Net() {
+		splitNets = append(splitNets, net)
+	}
 	if !(len(splitNets) == 2 && splitNets[0].String() == "193.18.0.0/16" && splitNets[1].String() == "193.19.0.0/19") {
 		t.Errorf("invalid parsing of split subnet, got: %v", splitNets)
 	}

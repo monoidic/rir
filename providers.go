@@ -23,49 +23,41 @@ func (p DefaultProvider) Name() string {
 
 func (p DefaultProvider) GetData() io.Reader {
 	log.Printf("Fetching %s data", p.Name())
-	response, err := http.Get(p.url)
-	if err != nil {
-		log.Fatal(err)
-	}
+	response := check1(http.Get(p.url))
 	defer response.Body.Close()
 
 	if status := response.StatusCode; status != 200 {
 		log.Fatalf("HTTP call returned %d", status)
 	}
 
-	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
+	content := check1(io.ReadAll(response.Body))
 
 	return bytes.NewBuffer(content)
 }
 
-var (
-	AllProviders = []CachedProvider{
-		NewCachedProvider(
-			"afrinic",
-			"https://ftp.ripe.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
-		),
-		NewCachedProvider(
-			"apnic",
-			"https://ftp.ripe.net/pub/stats/apnic/delegated-apnic-extended-latest",
-		),
-		NewCachedProvider(
-			"arin",
-			"https://ftp.ripe.net/pub/stats/arin/delegated-arin-extended-latest",
-		),
-		NewCachedProvider(
-			"lacnic",
-			"https://ftp.ripe.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
-		),
-		NewCachedProvider(
-			"ripencc",
-			"https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest",
-		),
-		//NewCachedProvider(
-		//	"iana",
-		//	"http://ftp.apnic.net/stats/iana/delegated-iana-latest",
-		//),
-	}
-)
+var AllProviders = []CachedProvider{
+	NewCachedProvider(
+		"afrinic",
+		"https://ftp.ripe.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
+	),
+	NewCachedProvider(
+		"apnic",
+		"https://ftp.ripe.net/pub/stats/apnic/delegated-apnic-extended-latest",
+	),
+	NewCachedProvider(
+		"arin",
+		"https://ftp.ripe.net/pub/stats/arin/delegated-arin-extended-latest",
+	),
+	NewCachedProvider(
+		"lacnic",
+		"https://ftp.ripe.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
+	),
+	NewCachedProvider(
+		"ripencc",
+		"https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest",
+	),
+	//NewCachedProvider(
+	//	"iana",
+	//	"http://ftp.apnic.net/stats/iana/delegated-iana-latest",
+	//),
+}

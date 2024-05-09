@@ -3,11 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"iter"
 	"log"
 	"math/big"
 	"net/netip"
 	"strings"
-	"sync"
 )
 
 func main() {
@@ -25,7 +25,11 @@ func main() {
 
 	flag.Parse()
 
-	query := Query{country: strings.ToUpper(country), ipstring: ipquery, hostscount: hostscount}
+	query := Query{
+		country:    strings.ToUpper(country),
+		ipstring:   ipquery,
+		hostscount: hostscount,
+	}
 
 	if !(all || query.IsCountryQuery() || query.IsIpQuery()) {
 		flag.Usage()
@@ -34,87 +38,42 @@ func main() {
 
 	CreateCacheDir()
 
-	records := retrieveData()
-
-	if all {
-		printAll(records)
-	} else if query.IsCountryQuery() {
-		results := query.matchOnCountry(records)
-		if query.hostscount {
-			countV4 := big.NewInt(0)
-			countV6 := big.NewInt(0)
-			netHosts := big.NewInt(0)
-			one := big.NewInt(1)
-			two := big.NewInt(2)
-
-			for r := range results {
-				ones := r.Bits()
-				addr := r.Addr()
-				var count *big.Int
-				var size int
-				if addr.Is4() {
-					count = countV4
-					size = 32
-				} else {
-					count = countV6
-					size = 128
-				}
-				mask := uint(size - ones)
-				if mask > 0 {
-					netHosts.Lsh(one, mask)
-					if size == 32 && mask < 31 { // network/broadcast only applicable to v4
-						netHosts.Sub(netHosts, two)
-					}
-
-					count.Add(count, netHosts)
-				}
-			}
-			fmt.Printf("v4: %s\nv6: %s\n", countV4, countV6)
-		} else {
-			for r := range results {
-				fmt.Println(r)
-			}
+	switch {
+	case all:
+		for r := range getAll {
+			fmt.Println(r)
 		}
-	} else {
-		for r := range query.matchOnIp(records) {
+
+	case query.IsCountryQuery():
+		if query.hostscount {
+			fmt.Println(query.countryStats())
+			break
+		}
+		for r := range query.readRegionsCountry {
+			fmt.Println(r)
+		}
+
+	case query.IsIpQuery():
+		for r := range query.matchOnIp {
 			fmt.Println(r)
 		}
 	}
 }
 
-func printAll(records chan Records) {
-	var wg sync.WaitGroup
-	ch := make(chan string, 10)
-	wg.Add(len(AllProviders))
-	go readRegionsAll(records, ch, &wg)
-
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	for s := range ch {
-		fmt.Println(s)
-	}
-}
-
-func readRegionsAll(recordsCh chan Records, ch chan string, wg *sync.WaitGroup) {
-	for region := range recordsCh {
-		go readRecordsAll(region, ch, wg)
-	}
-}
-
-func readRecordsAll(region Records, ch chan string, wg *sync.WaitGroup) {
-	for _, iprecord := range region.Ips {
-		cc := iprecord.Cc
-		if cc == "" {
-			continue
-		}
-		for _, net := range iprecord.Net() {
-			ch <- fmt.Sprintf("%s\t%s", cc, net)
+func getAll(yield func(string) bool) {
+	for region := range bufferedSeq(retrieveData, 10) {
+		for _, iprecord := range region.Ips {
+			cc := iprecord.Cc
+			if cc == "" {
+				continue
+			}
+			for net := range bufferedSeq(iprecord.Net(), 10) {
+				if !yield(fmt.Sprintf("%s\t%s", cc, net)) {
+					return
+				}
+			}
 		}
 	}
-	wg.Done()
 }
 
 type Query struct {
@@ -131,101 +90,102 @@ func (q Query) IsIpQuery() bool {
 	return q.ipstring != ""
 }
 
-func (q Query) matchOnCountry(records chan Records) chan netip.Prefix {
-	var wg sync.WaitGroup
-	ch := make(chan netip.Prefix, 10)
-	wg.Add(len(AllProviders))
-
-	go readRegionsCountry(records, ch, q.country, &wg)
-
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	return ch
-}
-
-func readRegionsCountry(recordsCh chan Records, ch chan netip.Prefix, country string, wg *sync.WaitGroup) {
-	for region := range recordsCh {
-		go readRecordsCountry(region, ch, country, wg)
-	}
-}
-
-func readRecordsCountry(records Records, ch chan netip.Prefix, country string, wg *sync.WaitGroup) {
-	for _, iprecord := range records.Ips {
-		if iprecord.Cc == country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
-			for _, net := range iprecord.Net() {
-				ch <- net
+func (q Query) readRegionsCountry(yield func(netip.Prefix) bool) {
+	for region := range bufferedSeq(retrieveData, 10) {
+		for _, iprecord := range region.Ips {
+			if iprecord.Cc == q.country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
+				for net := range bufferedSeq(iprecord.Net(), 10) {
+					if !yield(net) {
+						return
+					}
+				}
 			}
 		}
 	}
-	wg.Done()
 }
 
-func (q Query) matchOnIp(records chan Records) chan string {
-	if q.ipstring == "" {
-		flag.Usage()
-	}
-
-	var wg sync.WaitGroup
-	ch := make(chan string, 10)
-	wg.Add(len(AllProviders))
-
-	go readRegionsIP(records, ch, q.ipstring, &wg)
-
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	return ch
-}
-
-func readRegionsIP(recordsCh chan Records, ch chan string, ipstring string, wg *sync.WaitGroup) {
-	addr, err := netip.ParseAddr(ipstring)
-	if err != nil {
-		panic(err)
-	}
-
-	for region := range recordsCh {
-		go readRecordsIP(region, ch, addr, wg)
-	}
-}
-
-func readRecordsIP(records Records, ch chan string, addr netip.Addr, wg *sync.WaitGroup) {
-	for _, iprecord := range records.Ips {
-		for _, ipnet := range iprecord.Net() {
-			if ipnet.Contains(addr) {
-				ch <- fmt.Sprintf("%s %s", iprecord.Cc, ipnet)
+func (q Query) matchOnIp(yield func(string) bool) {
+	addr := netip.MustParseAddr(q.ipstring)
+	for region := range bufferedSeq(retrieveData, 10) {
+		for _, iprecord := range region.Ips {
+			for ipnet := range bufferedSeq(iprecord.Net(), 10) {
+				if ipnet.Contains(addr) {
+					if !yield(fmt.Sprintf("%s\t%s", iprecord.Cc, ipnet)) {
+						return
+					}
+				}
 			}
 		}
 	}
-	wg.Done()
 }
 
-func retrieveData() chan Records {
-	var wg sync.WaitGroup
-	ch := make(chan Records, 10)
-	wg.Add(len(AllProviders))
+func (q Query) countryStats() string {
+	countV4 := big.NewInt(0)
+	countV6 := big.NewInt(0)
+	netHosts := big.NewInt(0)
+	one := big.NewInt(1)
 
+	for r := range bufferedSeq(q.readRegionsCountry, 10) {
+		ones := r.Bits()
+		addr := r.Addr()
+		var count *big.Int
+		var size int
+
+		if addr.Is4() {
+			count = countV4
+			size = 32
+		} else {
+			count = countV6
+			size = 128
+		}
+
+		if mask := uint(size - ones); mask > 0 {
+			count.Add(count, netHosts.Lsh(one, mask))
+		}
+	}
+
+	return fmt.Sprintf("v4: %s\nv6: %s", countV4, countV6)
+}
+
+func retrieveData(yield func(Records) bool) {
 	for _, provider := range AllProviders {
-		go readProvider(provider, ch, &wg)
+		if !yield(NewReader(provider.GetData()).Read()) {
+			return
+		}
 	}
+}
+
+func check(err error) {
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
+func check1[T any](arg1 T, err error) T {
+	check(err)
+	return arg1
+}
+
+func bufferedSeq[T any](seq iter.Seq[T], bufsize int) iter.Seq[T] {
+	ch := make(chan T, bufsize)
+	var done bool
 
 	go func() {
-		wg.Wait()
+		for e := range seq {
+			if done {
+				break
+			}
+			ch <- e
+		}
 		close(ch)
 	}()
 
-	return ch
-}
-
-func readProvider(p Provider, ch chan Records, wg *sync.WaitGroup) {
-	records, err := NewReader(p.GetData()).Read()
-	if err != nil {
-		log.Fatal(err)
+	return func(yield func(T) bool) {
+		for e := range ch {
+			if !yield(e) {
+				break
+			}
+		}
+		done = true
 	}
-	ch <- records
-	wg.Done()
 }
