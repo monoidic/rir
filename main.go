@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/netip"
 	"strings"
+	"sync"
 )
 
 func main() {
@@ -61,7 +62,7 @@ func main() {
 }
 
 func getAll(yield func(string) bool) {
-	for region := range bufferedSeq(retrieveData, 10) {
+	for region := range retrieveData {
 		for _, iprecord := range region.Ips {
 			cc := iprecord.Cc
 			if cc == "" {
@@ -91,7 +92,7 @@ func (q Query) IsIpQuery() bool {
 }
 
 func (q Query) readRegionsCountry(yield func(netip.Prefix) bool) {
-	for region := range bufferedSeq(retrieveData, 10) {
+	for region := range retrieveData {
 		for _, iprecord := range region.Ips {
 			if iprecord.Cc == q.country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
 				for net := range bufferedSeq(iprecord.Net(), 10) {
@@ -106,7 +107,7 @@ func (q Query) readRegionsCountry(yield func(netip.Prefix) bool) {
 
 func (q Query) matchOnIp(yield func(string) bool) {
 	addr := netip.MustParseAddr(q.ipstring)
-	for region := range bufferedSeq(retrieveData, 10) {
+	for region := range retrieveData {
 		for _, iprecord := range region.Ips {
 			for ipnet := range bufferedSeq(iprecord.Net(), 10) {
 				if ipnet.Contains(addr) {
@@ -148,10 +149,29 @@ func (q Query) countryStats() string {
 }
 
 func retrieveData(yield func(Records) bool) {
+	ch := make(chan Records, len(AllProviders))
+	var wg sync.WaitGroup
+
+	wg.Add(len(AllProviders))
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
 	for _, provider := range AllProviders {
-		if !yield(NewReader(provider.GetData()).Read()) {
-			return
+		go func() {
+			ch <- NewReader(provider.GetData()).Read()
+			wg.Done()
+		}()
+	}
+
+	for record := range ch {
+		if !yield(record) {
+			break
 		}
+	}
+	// still drain channel on early `break`
+	for range ch {
 	}
 }
 
