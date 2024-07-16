@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"iter"
 	"log"
 	"math/big"
 	"net/netip"
@@ -68,7 +67,7 @@ func getAll(yield func(string) bool) {
 			if cc == "" {
 				continue
 			}
-			for net := range bufferedSeq(iprecord.Net(), 10) {
+			for net := range iprecord.Net {
 				if !yield(fmt.Sprintf("%s\t%s", cc, net)) {
 					return
 				}
@@ -95,7 +94,7 @@ func (q Query) readRegionsCountry(yield func(netip.Prefix) bool) {
 	for region := range retrieveData {
 		for _, iprecord := range region.Ips {
 			if iprecord.Cc == q.country && (iprecord.Type == IPv4 || iprecord.Type == IPv6) {
-				for net := range bufferedSeq(iprecord.Net(), 10) {
+				for net := range iprecord.Net {
 					if !yield(net) {
 						return
 					}
@@ -109,7 +108,7 @@ func (q Query) matchOnIp(yield func(string) bool) {
 	addr := netip.MustParseAddr(q.ipstring)
 	for region := range retrieveData {
 		for _, iprecord := range region.Ips {
-			for ipnet := range bufferedSeq(iprecord.Net(), 10) {
+			for ipnet := range iprecord.Net {
 				if ipnet.Contains(addr) {
 					if !yield(fmt.Sprintf("%s\t%s", iprecord.Cc, ipnet)) {
 						return
@@ -126,7 +125,7 @@ func (q Query) countryStats() string {
 	netHosts := big.NewInt(0)
 	one := big.NewInt(1)
 
-	for r := range bufferedSeq(q.readRegionsCountry, 10) {
+	for r := range q.readRegionsCountry {
 		ones := r.Bits()
 		addr := r.Addr()
 		var count *big.Int
@@ -184,28 +183,4 @@ func check(err error) {
 func check1[T any](arg1 T, err error) T {
 	check(err)
 	return arg1
-}
-
-func bufferedSeq[T any](seq iter.Seq[T], bufsize int) iter.Seq[T] {
-	ch := make(chan T, bufsize)
-	var done bool
-
-	go func() {
-		for e := range seq {
-			if done {
-				break
-			}
-			ch <- e
-		}
-		close(ch)
-	}()
-
-	return func(yield func(T) bool) {
-		for e := range ch {
-			if !yield(e) {
-				break
-			}
-		}
-		done = true
-	}
 }

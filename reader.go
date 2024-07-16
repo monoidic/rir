@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"io"
-	"iter"
 	"log"
 	"math"
 	"net/netip"
@@ -102,15 +101,14 @@ func (ipr IpRecord) v6Net(yield func(netip.Prefix) bool) {
 	yield(netip.PrefixFrom(ipr.Start, ipr.Value))
 }
 
-func (ipr IpRecord) Net() iter.Seq[netip.Prefix] {
+func (ipr IpRecord) Net(yield func(netip.Prefix) bool) {
 	switch ipr.Type {
 	case IPv4:
-		return ipr.v4Net
+		ipr.v4Net(yield)
 	case IPv6:
-		return ipr.v6Net
+		ipr.v6Net(yield)
 	default:
 		log.Fatalf("no ipnet for ip of type '%s'", ipr.Type)
-		return nil
 	}
 }
 

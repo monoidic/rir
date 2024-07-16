@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"log"
 	"net/netip"
 	"os"
@@ -104,15 +103,12 @@ func TestParsingRegularFile(t *testing.T) {
 
 	splitRecord := findIpWith(records, "193.18.0.0")
 	var splitNets []netip.Prefix
-	for net := range splitRecord.Net() {
+	for net := range splitRecord.Net {
 		splitNets = append(splitNets, net)
 	}
 	if !(len(splitNets) == 2 && splitNets[0].String() == "193.18.0.0/16" && splitNets[1].String() == "193.19.0.0/19") {
 		t.Errorf("invalid parsing of split subnet, got: %v", splitNets)
 	}
-
-	splitRecord2 := findIpWith(records, "0.0.0.0")
-	fmt.Println(splitRecord2.Net())
 }
 
 var regularData = `2.3|apnic|20110113|23486|19850701|20110112|+1000
